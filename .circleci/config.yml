@@ -25,57 +25,57 @@ jobs:
     - checkout
     # 让步骤中可以调用其他 docker
     - setup_remote_docker
-- restore_cache:
+    - restore_cache:
     keys:
     - v1-dependencies-{{ checksum "composer.json" }}
     # 如果没有匹配的缓存则使用最新的缓存
     - v1-dependencies-
     {{ checksum "filename" }}
-- run:
+    - run:
     name: Install local dependencies
     command: composer install -n --prefer-dist
-- save_cache:
+    - save_cache:
     paths:
     - ./vendor
     key: v1-dependencies-{{ checksum "composer.json" }}
-- run:
+    - run:
     name: Testing
     command: phpunit    
-- run:
+    - run:
     name: Build image
     command: |
         docker build -t $FULL_IMAGE_NAME .
         mkdir docker-image
         docker save -o docker-image/image.tar $FULL_IMAGE_NAME
-- run:
+    - run:
     name: Test image
     command: |
       docker run -d -p 8080:80 --name built-image $FULL_IMAGE_NAME
       sleep 10
       docker run --network container:built-image byrnedo/alpine-curl -I --retry 10 --retry-connrefused http://localhost
-- persist_to_workspace:
+    - persist_to_workspace:
     root: .
     paths:
     - docker-image
-- attach_workspace:
+    - attach_workspace:
     at: workspace
-- run:
+    - run:
     name: Load image
     command: |
       docker load --input workspace/docker-image/image.tar
-- restore_cache:
+    - restore_cache:
     key: v1-{{ checksum "requirements.txt" }}
-- run:
+    - run:
     name: Get Aws-cli
     command: |
     python3 -m venv venv
     . venv/bin/activate
     pip install -r requirements.txt
-- save_cache:
+    - save_cache:
     key: v1-{{ checksum "requirements.txt" }}
     paths:
     - "venv"    # Download and cache dependencies      
-- run:
+    - run:
     name: Push Docker Image
     command: |
       . venv/bin/activate
