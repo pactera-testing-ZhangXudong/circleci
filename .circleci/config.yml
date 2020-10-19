@@ -1,30 +1,89 @@
+# PHP CircleCI 2.0 configuration file
+#
+# Check https://circleci.com/docs/2.0/language-php/ for more details
+#
 version: 2
-jobs: # we now have TWO jobs, so that a workflow can coordinate them!
-  one: # This is our first job.
-    docker: # it uses the docker executor
-      - image: circleci/ruby:2.4.1 # specifically, a docker image with ruby 2.4.1
-        auth:
-          username: mydockerhub-user
-          password: $DOCKERHUB_PASSWORD  # context / project UI env-var reference
-    # Steps are a list of commands to run inside the docker container above.
+jobs:
+  build:
+    docker:
+    - image: circleci/php:7.1-browsers
+    # 必要时可以在这里指定依赖镜像
+    # - image: circleci/mysql:9.4
+
+    working_directory: ~/repo
+
     steps:
-      - checkout # this pulls code down from GitHub
-      - run: echo "A first hello" # This prints "A first hello" to stdout.
-      - run: sleep 25 # a command telling the job to "sleep" for 25 seconds.
-  two: # This is our second job.
-    docker: # it runs inside a docker image, the same as above.
-      - image: circleci/ruby:2.4.1
-        auth:
-          username: mydockerhub-user
-          password: $DOCKERHUB_PASSWORD  # context / project UI env-var reference
+    - checkout
+    - run: composer install -n --prefer-dist
+
+    # 运行单元测试
+    - run: phpunit
+  deploy:
+    docker:
+    - image: circleci/python:3.6.1
+
+    working_directory: ~/repo
+
     steps:
-      - checkout
-      - run: echo "A more familiar hi" # We run a similar echo command to above.
-      - run: sleep 15 # and then sleep for 15 seconds.
-# Under the workflows: map, we can coordinate our two jobs, defined above.
-workflows:
-  version: 2
-  one_and_two: # this is the name of our workflow
-    jobs: # and here we list the jobs we are going to run.
-      - one
-      - two
+    # 将分支中的代码检出到 working_directory 
+- checkout
+# 让步骤中可以调用其他 docker
+- setup_remote_docker
+- restore_cache:
+    keys:
+    - v1-dependencies-{{ checksum "composer.json" }}
+    # 如果没有匹配的缓存则使用最新的缓存
+    - v1-dependencies-
+    {{ checksum "filename" }}
+- run:
+    name: Install local dependencies
+    command: composer install -n --prefer-dist
+- save_cache:
+    paths:
+    - ./vendor
+    key: v1-dependencies-{{ checksum "composer.json" }}
+- run:
+    name: Testing
+    command: phpunit    
+- run:
+    name: Build image
+    command: |
+        docker build -t $FULL_IMAGE_NAME .
+        mkdir docker-image
+        docker save -o docker-image/image.tar $FULL_IMAGE_NAME
+- run:
+    name: Test image
+    command: |
+      docker run -d -p 8080:80 --name built-image $FULL_IMAGE_NAME
+      sleep 10
+      docker run --network container:built-image byrnedo/alpine-curl -I --retry 10 --retry-connrefused http://localhost
+- persist_to_workspace:
+    root: .
+    paths:
+    - docker-image
+- attach_workspace:
+    at: workspace
+- run:
+    name: Load image
+    command: |
+      docker load --input workspace/docker-image/image.tar
+- restore_cache:
+    key: v1-{{ checksum "requirements.txt" }}
+- run:
+    name: Get Aws-cli
+    command: |
+    python3 -m venv venv
+    . venv/bin/activate
+    pip install -r requirements.txt
+- save_cache:
+    key: v1-{{ checksum "requirements.txt" }}
+    paths:
+    - "venv"    # Download and cache dependencies      
+- run:
+    name: Push Docker Image
+    command: |
+      . venv/bin/activate
+      $(aws ecr get-login --no-include-email)
+      docker tag mobingi-api-cn $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com.cn/mobingi-api-dev:$CIRCLE_SHA1
+      docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com.cn/mobingi-api-dev:$CIRCLE_SHA1
+      
